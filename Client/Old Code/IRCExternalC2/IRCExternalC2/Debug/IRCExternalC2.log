@@ -1,0 +1,5 @@
+﻿  IRCExternalC2.c
+  C:\Users\developer\source\repos\IRCExternalC2\IRCExternalC2\IRCExternalC2.c(268) : warning C4172: returning address of local variable or temporary: tmpbuf
+  IRCExternalC2.vcxproj -> C:\Users\developer\source\repos\IRCExternalC2\Debug\IRCExternalC2.exe
+C:\Users\developer\source\repos\IRCExternalC2\IRCExternalC2\base64.h(87): warning C6386: Buffer overrun while writing to 'res':  the writable size is '(unsigned int)*flen+(unsigned int)1' bytes, but '2' bytes might be written.
+C:\Users\developer\source\repos\IRCExternalC2\IRCExternalC2\base64.h(130): warning C6386: Buffer overrun while writing to 'bin':  the writable size is '*flen' bytes, but '2' bytes might be written.

@@ -1,0 +1,7 @@
+﻿  IRCExternalC2.c
+  Generating code
+c:\users\developer\source\repos\ircexternalc2\ircexternalc2\ircexternalc2.c(268): warning C4172: returning address of local variable or temporary: tmpbuf
+  Finished generating code
+  All 20 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  IRCExternalC2.vcxproj -> C:\Users\developer\source\repos\IRCExternalC2\Release\IRCExternalC2.exe
+  IRCExternalC2.vcxproj -> C:\Users\developer\source\repos\IRCExternalC2\Release\IRCExternalC2.pdb (Full PDB)

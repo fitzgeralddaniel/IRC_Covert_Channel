@@ -1,0 +1,9 @@
+﻿  IRCExternalC2.c
+IRCExternalC2.c(454): warning C4047: 'initializing': 'void *' differs in levels of indirection from 'char'
+  Generating code
+  Finished generating code
+  2 of 30 functions ( 6.7%) were compiled, the rest were copied from previous compilation.
+    0 functions were new in current compilation
+    1 functions had inline decision re-evaluated but remain unchanged
+  IRCExternalC2.vcxproj -> C:\Users\developer\source\repos\IRCExternalC2\Release\IRCExternalC2.exe
+  IRCExternalC2.vcxproj -> C:\Users\developer\source\repos\IRCExternalC2\Release\IRCExternalC2.pdb (Full PDB)
