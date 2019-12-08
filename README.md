@@ -8,13 +8,13 @@ Current status: Not ready
 
 Files:
 
-Client - Code for covert channel client to be run on target
+	Client - Code for covert channel client to be run on target
 
-IRCdServer - Conf file example for IRCd server if oper permissions are needed
+	IRCdServer - Conf file example for IRCd server if oper permissions are needed
 
-Server - Code for covert channel server to be run on teamserver
+	Server - Code for covert channel server to be run on teamserver
 
-mirc756.exe - Installer for mIRC
-unrealircd-4.2.4.1.exe - Installer for UnrealIRCd
-vc_redist.x86.exe - Installer for visual studios dependencies if needed. (see README notes in Client)
+	mirc756.exe - Installer for mIRC
+	unrealircd-4.2.4.1.exe - Installer for UnrealIRCd
+	vc_redist.x86.exe - Installer for visual studios dependencies if needed. (see README notes in Client)
 
