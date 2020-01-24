@@ -19,7 +19,6 @@ Jan 2020 - Ready for testing
 	- B64Mode - Current server code
 	- CloakifyMode(Broken) - Cloakify code, currently broken
 	- OldCode
-	- externalc2.cna - Aggressor script for ExternalC2 (v4.0 might make this not needed)
 	- README.txt
 
 - Programs.7z

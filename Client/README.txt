@@ -3,7 +3,7 @@ IRC Covert Channel Client Readme
 NOTE: This project is a work in progress. When building using VisualStudio turn Project Properties-C/C++-Code Generation- Runtime Library to Multi-threaded(/MT)
 	instead of Multi-threaded DLL (/MD) to remove dependency on DLLs. Also change General-Platform Toolset to Visual Studio 2015 - Windows XP if your 
 	target is older. 
-	When using MinGW use the following command: i686-w64-mingw32-gcc -s -O3 -fvisibility=hidden -o mIRCHelper.exe Client/B64Mode/ClientNoDebug.c -lws2_32
+	When using MinGW use the following command: i686-w64-mingw32-gcc -s -O3 -fvisibility=hidden -o mIRCHelper.exe Client/B64Mode/ClientRelease.c -lws2_32
 
 Status: 
 	B64Mode - Client sends B64 encoded messages over IRC to Server.

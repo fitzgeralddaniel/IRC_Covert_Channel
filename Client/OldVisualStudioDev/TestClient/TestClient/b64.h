@@ -58,8 +58,8 @@ char* base64(const void* binaryData, int len, int* flen)
 	res = (char*)malloc(*flen + 1); // and one for the null
 	if (!res)
 	{
-		puts("ERROR: base64 could not allocate enough memory.");
-		puts("I must stop because I could not get enough");
+		//puts("ERROR: base64 could not allocate enough memory.");
+		//puts("I must stop because I could not get enough");
 		return 0;
 	}
 
@@ -103,7 +103,7 @@ unsigned char* unbase64(const char* ascii, int len, int* flen)
 
 	if (len < 2) { // 2 accesses below would be OOB.
 	  // catch empty string, return NULL as result.
-		puts("ERROR: You passed an invalid base64 string (too short). You get NULL back.");
+		//puts("ERROR: You passed an invalid base64 string (too short). You get NULL back.");
 		*flen = 0;
 		return 0;
 	}
@@ -114,8 +114,8 @@ unsigned char* unbase64(const char* ascii, int len, int* flen)
 	bin = (unsigned char*)malloc(*flen);
 	if (!bin)
 	{
-		puts("ERROR: unbase64 could not allocate enough memory.");
-		puts("I must stop because I could not get enough");
+		//puts("ERROR: unbase64 could not allocate enough memory.");
+		//puts("I must stop because I could not get enough");
 		return 0;
 	}
 

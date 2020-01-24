@@ -12,10 +12,10 @@ Intent: Develop a covert channel that uses IRC to communicate and integrate it i
 Future work:
 	Fix cloakify mode.
 
-externalc2.cna:
-	Cobalt Strike aggressor script that tells the teamserver to listen for an ExternalC2 connection
-	TODO: Test this on teamserver that is not on the same box as cobalt strike client.
-	NOTE: CobaltStrike v4.0 might make this not needed as you can start an ExternalC2 listener in the GUI.
+NOTE: Running commands that transfer large ammounts of data will take some time. Commands like hashdump can take 2 min if connected as op without lag, 
+	  much longer if there is lag.
+	  Remember to create a External C2 listener in Cobalt Strike with the correct port (2222 is default) and localhost settings. If running on a separate
+	  box, make sure localhost only is unchecked and the src_ip parameter matches the teamservers IP.
 
 B64IRCServ.py:
 	Run with the following command: python3 B64IRCServ.py [SRC_IP] [IRC_IP] [IRC_PORT] [NICK] [OP_NICK] [OP_PASS] [USER] [REAL_NAME] [CHANNEL] [CLIENT_NICK] [TRAFFIC_STR] [LEN_STR] [START_STR]
@@ -35,6 +35,7 @@ B64IRCServ.py:
 	[TRAFFIC_STR] - String that will prefix the B64 encoded message. (i.e. TrafficGen) This will be used to find the data in the string. It must be the same as the client.
 	[LEN_STR] - String that will prefix the int representing the length of the incomming B64 encoded data. (i.e. Len) This will be used to find the lenth. It must be the same as the client.
 	[START_STR] - String that will tell the server to start transmitting data. It must be the same as the client.
+	[PIPE_STR] - String to name the pipe to the beacon. (i.e. mIRC)
 
 	The program will connect to the IRC server and channel using the information passed to it. It will then wait for a message from the 
 	client telling the covert server to start sending traffic. Messages will be in the form of Cobalt Strike External C2 frames encoded 
