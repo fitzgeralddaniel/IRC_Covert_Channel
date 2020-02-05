@@ -5,10 +5,14 @@ NOTE: This project is a work in progress. When building using VisualStudio turn 
 	target is older. 
 	When using MinGW use the following command: i686-w64-mingw32-gcc -s -O3 -fvisibility=hidden -o mIRCHelper.exe Client/B64Mode/ClientRelease.c -lws2_32
 
+	If using the hardcoded program, make sure to edit the hardcoded values before compiling!
+
 Status: 
 	B64Mode - Client sends B64 encoded messages over IRC to Server.
 		ClientDebug.c - DEBUG
 		ClientRelease.c - Release (No print/output)
+		ClientDebugHardcode.c - DEBUG with hardcoded input
+		ClientReleaseHardcode.c - Release with hardcoded input
 	CloakifyMode - CloakifyMode is still broken. When fixed keep in mind it will take much longer and create more traffic.
 
 Intent: Develop a covert channel that uses IRC to communicate and integrate it into Cobalt Strike to allow the red team to 
